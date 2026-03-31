@@ -1,0 +1,321 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #181818; font-family: var(--font-serif, Georgia, serif); }
+
+#stage {
+  width: 100%;
+  height: 520px;
+  background: #181818;
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+.controls {
+  background: #222;
+  border-top: 0.5px solid #383838;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  border-radius: 0 0 8px 8px;
+}
+
+.ctrl-label {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: #7A7875;
+  white-space: nowrap;
+}
+
+.ctrl-label span {
+  color: #EDE8D8;
+  font-weight: 500;
+}
+
+input[type=range] { flex: 1; accent-color: #E8503A; }
+
+button {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  background: transparent;
+  border: 0.5px solid #E8503A;
+  color: #E8503A;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover { background: #E8503A22; }
+button.active { background: #E8503A; color: #181818; }
+</style>
+
+<div id="stage"><canvas id="c"></canvas></div>
+<div class="controls">
+  <div class="ctrl-label">Drift intensity&nbsp;<span id="dval">50</span>%</div>
+  <input type="range" min="0" max="100" value="50" id="dslider" step="1">
+  <button id="btnPlay" class="active">Pause</button>
+  <button id="btnReset">Reset</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const stage = document.getElementById('stage');
+
+const CORAL = '#E8503A';
+const PINK  = '#D966A0';
+const BLUE  = '#A0C0E8';
+const DIM   = '#7A7875';
+const OFF   = '#EDE8D8';
+
+const LANGS = ['Azerbaijani', 'Russian', 'English'];
+const COLORS = [CORAL, PINK, BLUE];
+
+const SENTENCES = [
+  [
+    'Mən səni dinləyirəm.',
+    'Mən səni eşidirəm.',
+    'Məni anlamırsan.',
+  ],
+  [
+    'Я тебя слушаю.',
+    'Слышу твою боль.',
+    'Ты не понимаешь.',
+  ],
+  [
+    'I hear you.',
+    'I feel your silence.',
+    "You don't understand me.",
+  ]
+];
+
+let W, H, dpr;
+let t = 0;
+let running = true;
+let driftPct = 0.5;
+let animId;
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = stage.clientWidth;
+  H = stage.clientHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  ctx.scale(dpr, dpr);
+}
+
+function ease(x) { return x < 0.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2; }
+
+function drawScene(progress) {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#181818';
+  ctx.fillRect(0, 0, W, H);
+
+  const splitX = W * 0.32;
+  const originY = H * 0.5;
+
+  const p = Math.min(progress, 1);
+  const splitProgress = Math.max(0, Math.min(1, (p - 0.15) / 0.35));
+  const textProgress  = Math.max(0, Math.min(1, (p - 0.05) / 0.3));
+  const endProgress   = Math.max(0, Math.min(1, (p - 0.45) / 0.55));
+
+  const targetYs = [H * 0.22, H * 0.5, H * 0.78];
+  const spread = ease(splitProgress) * driftPct;
+
+  const streamYs = targetYs.map((ty, i) => {
+    const base = originY + (ty - originY) * spread;
+    const wave = Math.sin(t * 0.8 + i * 2.1) * 4 * spread;
+    return base + wave;
+  });
+
+  // ── Original line ──────────────────────────────────────────────────────
+  const lineEndX = splitX + (W * 0.06) * Math.min(1, p / 0.15);
+  ctx.strokeStyle = OFF;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(W * 0.04, originY);
+  ctx.lineTo(Math.min(lineEndX, splitX + W * 0.06), originY);
+  ctx.stroke();
+
+  // Fracture point dot
+  if (p > 0.12) {
+    const dotAlpha = Math.min(1, (p - 0.12) / 0.1);
+    ctx.fillStyle = `rgba(232,80,58,${dotAlpha})`;
+    ctx.beginPath();
+    ctx.arc(splitX, originY, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Fracture label
+    ctx.fillStyle = `rgba(122,120,117,${dotAlpha * 0.8})`;
+    ctx.font = '11px var(--font-sans, sans-serif)';
+    ctx.textAlign = 'center';
+    ctx.fillText('AI intercepts', splitX, originY - 14);
+  }
+
+  // ── Three diverging streams ────────────────────────────────────────────
+  if (splitProgress > 0) {
+    COLORS.forEach((col, i) => {
+      const sy = streamYs[i];
+      const cp1x = splitX + (W * 0.12);
+      const cp1y = originY + (sy - originY) * 0.3;
+      const cp2x = splitX + (W * 0.22);
+      const cp2y = sy;
+      const endX  = splitX + (W * 0.28) * ease(splitProgress);
+
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.moveTo(splitX, originY);
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, sy);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Drift particles along each stream
+      if (endProgress > 0) {
+        const numDots = Math.floor(3 * driftPct);
+        for (let d = 0; d < numDots; d++) {
+          const phase = ((t * 0.4 + d * 1.3 + i * 0.9) % 1);
+          const px = endX + (W * 0.55 * endProgress) * phase;
+          const drift = Math.sin(phase * Math.PI * 3 + i + t * 0.5) * 12 * driftPct;
+          const py = sy + drift;
+          const alpha = Math.sin(phase * Math.PI) * 0.7;
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.arc(px, py, 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        // Extended stream line
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 6]);
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(endX, sy);
+        ctx.lineTo(endX + W * 0.55 * endProgress, sy + Math.sin(t * 0.3 + i) * 8 * driftPct);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+    });
+  }
+
+  // ── Language labels + sentences ────────────────────────────────────────
+  if (splitProgress > 0.3) {
+    const labelAlpha = Math.min(1, (splitProgress - 0.3) / 0.3);
+    const labelX = splitX + W * 0.12;
+
+    LANGS.forEach((lang, i) => {
+      const sy = streamYs[i];
+      ctx.globalAlpha = labelAlpha;
+
+      // Language pill
+      ctx.fillStyle = COLORS[i] + '22';
+      ctx.strokeStyle = COLORS[i];
+      ctx.lineWidth = 0.5;
+      const pw = 80, ph = 20;
+      ctx.beginPath();
+      ctx.roundRect(labelX - pw/2, sy - ph/2, pw, ph, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = COLORS[i];
+      ctx.font = '500 11px var(--font-sans, sans-serif)';
+      ctx.textAlign = 'center';
+      ctx.fillText(lang, labelX, sy + 4);
+
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  // ── Drifted sentences at right ─────────────────────────────────────────
+  if (endProgress > 0.3) {
+    const sentAlpha = Math.min(1, (endProgress - 0.3) / 0.4);
+    const sentIdx = Math.min(2, Math.floor(driftPct * 2.99));
+
+    LANGS.forEach((_, i) => {
+      const sy = streamYs[i];
+      const sx = W * 0.72;
+      ctx.globalAlpha = sentAlpha;
+
+      ctx.fillStyle = COLORS[i];
+      ctx.font = `italic 13px var(--font-serif, Georgia, serif)`;
+      ctx.textAlign = 'left';
+      ctx.fillText(SENTENCES[i][sentIdx], sx, sy + 5);
+
+      // Drift severity badge
+      const severity = ['green', 'amber', 'red'][sentIdx];
+      const sCol = sentIdx === 0 ? '#6EC97B' : sentIdx === 1 ? '#E8C53A' : '#E8503A';
+      ctx.font = '10px var(--font-sans, sans-serif)';
+      ctx.fillStyle = sCol;
+      ctx.fillText(['● minimal', '● moderate', '● severe'][sentIdx], sx, sy - 10);
+
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  // ── Original sentence label ────────────────────────────────────────────
+  if (textProgress > 0) {
+    ctx.globalAlpha = Math.min(1, textProgress * 2);
+    ctx.fillStyle = OFF;
+    ctx.font = `italic 14px var(--font-serif, Georgia, serif)`;
+    ctx.textAlign = 'center';
+    ctx.fillText('"Mən səni dinləyirəm / Я тебя слушаю / I hear you."', W * 0.18, originY - 22);
+    ctx.font = '10px var(--font-sans, sans-serif)';
+    ctx.fillStyle = DIM;
+    ctx.fillText('original · verbatim', W * 0.18, originY + 22);
+    ctx.globalAlpha = 1;
+  }
+
+  // ── Legend ─────────────────────────────────────────────────────────────
+  ctx.font = '11px var(--font-sans, sans-serif)';
+  ctx.textAlign = 'left';
+  [['● minimal drift', '#6EC97B'], ['● moderate drift', '#E8C53A'], ['● severe drift', '#E8503A']].forEach(([label, col], i) => {
+    ctx.fillStyle = col;
+    ctx.globalAlpha = 0.7;
+    ctx.fillText(label, W * 0.73, H - 48 + i * 16);
+  });
+  ctx.globalAlpha = 1;
+}
+
+function loop() {
+  t += 0.016;
+  const cycle = 6;
+  const progress = (t % cycle) / cycle;
+  drawScene(progress);
+  if (running) animId = requestAnimationFrame(loop);
+}
+
+document.getElementById('dslider').addEventListener('input', e => {
+  driftPct = e.target.value / 100;
+  document.getElementById('dval').textContent = e.target.value;
+});
+
+document.getElementById('btnPlay').addEventListener('click', function() {
+  running = !running;
+  this.textContent = running ? 'Pause' : 'Play';
+  this.classList.toggle('active', running);
+  if (running) loop();
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  t = 0;
+  if (!running) { running = true; document.getElementById('btnPlay').textContent = 'Pause'; document.getElementById('btnPlay').classList.add('active'); }
+  cancelAnimationFrame(animId);
+  loop();
+});
+
+window.addEventListener('resize', () => { resize(); });
+
+resize();
+loop();
+</script>
